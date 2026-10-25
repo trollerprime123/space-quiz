@@ -407,15 +407,76 @@
       line-height: 1;
     }
 
-    .score-display span:last-child {
+    .score-display .score-total {
       color: var(--muted);
       font-size: 20px;
       font-weight: 650;
       letter-spacing: -.02em;
     }
 
-    .result-label { margin: 0 0 23px; color: var(--muted); font-size: 13px; }
+    .result-label { margin: 0 0 7px; color: var(--muted); font-size: 13px; }
     .result .primary { margin: 0 auto; }
+
+    .best-score {
+      margin: 0 0 23px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .best-score strong { color: var(--ink); }
+
+    .review {
+      margin: 0 0 23px;
+      text-align: left;
+    }
+
+    .review h3 {
+      margin: 0 0 11px;
+      font-size: 15px;
+      letter-spacing: -.02em;
+    }
+
+    .review ul {
+      display: grid;
+      gap: 9px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .review li {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface-soft);
+    }
+
+    .review-question {
+      margin: 0 0 5px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .review-answer, .review-fact {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .review-answer strong { color: var(--green); }
+
+    .all-correct {
+      margin: 0 0 23px;
+      padding: 12px;
+      border: 1px solid color-mix(in srgb, var(--green) 35%, var(--line));
+      border-radius: 11px;
+      color: var(--green);
+      background: var(--green-bg);
+      font-size: 13px;
+      font-weight: 700;
+    }
 
     .footer {
       margin-top: 17px;
@@ -483,7 +544,7 @@
       <div id="quiz-view">
         <div class="quiz-head">
           <div class="stats">
-            <div class="question-count">Question <strong id="question-number">1</strong> of <strong>10</strong></div>
+            <div class="question-count">Question <strong id="question-number">1</strong> of <strong id="question-total">10</strong></div>
             <div class="score-pill"><span aria-hidden="true">⭐</span> Score <strong id="score">0</strong></div>
           </div>
           <div class="progress-track" role="progressbar" aria-label="Quiz progress" aria-valuemin="0" aria-valuemax="10" aria-valuenow="1">
@@ -506,8 +567,14 @@
         <p class="eyebrow">Mission complete</p>
         <h2 id="result-title">Stellar work!</h2>
         <p class="result-copy" id="result-copy">You made it across the cosmos.</p>
-        <div class="score-display"><span id="final-score">0</span><span>/ 10</span></div>
+        <div class="score-display"><span id="final-score">0</span><span class="score-total">/ <span id="result-total">10</span></span></div>
         <p class="result-label">correct answers</p>
+        <p class="best-score">🏅 Personal best: <strong id="best-score">0</strong> / <span id="best-total">10</span></p>
+        <p class="all-correct" id="all-correct" hidden>Perfect run! You got every question right. 🌟</p>
+        <section class="review" id="missed-review" aria-labelledby="review-title" hidden>
+          <h3 id="review-title">A few facts to take with you</h3>
+          <ul id="review-list"></ul>
+        </section>
         <button class="primary" id="restart-button" type="button"> <span aria-hidden="true">↻</span> Play again</button>
       </div>
     </section>
@@ -600,25 +667,66 @@
     const hintEl = document.querySelector("#hint");
     const quizView = document.querySelector("#quiz-view");
     const resultView = document.querySelector("#result-view");
+    const missedReview = document.querySelector("#missed-review");
+    const reviewList = document.querySelector("#review-list");
+    const allCorrect = document.querySelector("#all-correct");
+    const bestScoreEl = document.querySelector("#best-score");
+    const bestScoreKey = "orbit-best-score";
     let current = 0;
     let score = 0;
     let answered = false;
+    let currentQuestions = questions;
+    let missedQuestions = [];
+    let bestScore = loadBestScore();
+
+    function loadBestScore() {
+      try {
+        const savedScore = Number(window.localStorage.getItem(bestScoreKey));
+        return Number.isInteger(savedScore) && savedScore >= 0 && savedScore <= questions.length
+          ? savedScore
+          : 0;
+      } catch {
+        return 0;
+      }
+    }
+
+    function saveBestScore(value) {
+      try {
+        window.localStorage.setItem(bestScoreKey, String(value));
+      } catch {
+        // Keep the current session's best score even when browser storage is blocked.
+      }
+    }
+
+    function shuffleQuestions(previousOrder) {
+      const shuffled = [...questions];
+      for (let index = shuffled.length - 1; index > 0; index--) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+      }
+      if (shuffled.length > 1 && shuffled.every((item, index) => item === previousOrder[index])) {
+        shuffled.push(shuffled.shift());
+      }
+      return shuffled;
+    }
 
     function renderQuestion() {
-      const item = questions[current];
+      const item = currentQuestions[current];
       answered = false;
       questionNumber.textContent = String(current + 1);
+      document.querySelector("#question-total").textContent = String(currentQuestions.length);
       topicEl.textContent = item.topic;
       questionEl.textContent = item.question;
       scoreEl.textContent = String(score);
-      progress.style.width = `${((current + 1) / questions.length) * 100}%`;
+      progress.style.width = `${((current + 1) / currentQuestions.length) * 100}%`;
+      progressBar.setAttribute("aria-valuemax", String(currentQuestions.length));
       progressBar.setAttribute("aria-valuenow", String(current + 1));
       answersEl.replaceChildren();
       feedbackEl.textContent = "";
       feedbackEl.className = "feedback";
       hintEl.textContent = "Pick the best answer to continue";
       nextButton.hidden = true;
-      nextButton.innerHTML = current === questions.length - 1
+      nextButton.innerHTML = current === currentQuestions.length - 1
         ? 'See my results <span aria-hidden="true">→</span>'
         : 'Next question <span aria-hidden="true">→</span>';
 
@@ -642,7 +750,7 @@
     function chooseAnswer(selected) {
       if (answered) return;
       answered = true;
-      const item = questions[current];
+      const item = currentQuestions[current];
       const buttons = [...answersEl.children];
       buttons.forEach((button, index) => {
         button.disabled = true;
@@ -655,6 +763,11 @@
         feedbackEl.classList.add("is-correct");
       } else {
         buttons[selected].classList.add("wrong");
+        missedQuestions.push({
+          question: item.question,
+          answer: item.answers[item.correct],
+          fact: item.fact
+        });
         feedbackEl.textContent = `Not quite. ${item.fact}`;
         feedbackEl.classList.add("is-wrong");
       }
@@ -667,6 +780,32 @@
       quizView.hidden = true;
       resultView.hidden = false;
       document.querySelector("#final-score").textContent = String(score);
+      document.querySelector("#result-total").textContent = String(currentQuestions.length);
+      document.querySelector("#best-total").textContent = String(currentQuestions.length);
+      if (score > bestScore) {
+        bestScore = score;
+        saveBestScore(bestScore);
+      }
+      bestScoreEl.textContent = String(bestScore);
+      reviewList.replaceChildren();
+      allCorrect.hidden = missedQuestions.length > 0;
+      missedReview.hidden = missedQuestions.length === 0;
+      missedQuestions.forEach(({ question, answer, fact }) => {
+        const item = document.createElement("li");
+        const questionText = document.createElement("p");
+        questionText.className = "review-question";
+        questionText.textContent = question;
+        const answerText = document.createElement("p");
+        answerText.className = "review-answer";
+        const answerLabel = document.createElement("strong");
+        answerLabel.textContent = "Correct answer: ";
+        answerText.append(answerLabel, document.createTextNode(answer));
+        const factText = document.createElement("p");
+        factText.className = "review-fact";
+        factText.textContent = fact;
+        item.append(questionText, answerText, factText);
+        reviewList.append(item);
+      });
       let emoji = "🌱";
       let title = "A curious explorer!";
       let copy = "Every great space explorer starts somewhere.";
@@ -690,7 +829,7 @@
     }
 
     nextButton.addEventListener("click", () => {
-      if (current < questions.length - 1) {
+      if (current < currentQuestions.length - 1) {
         current++;
         renderQuestion();
         questionEl.focus({ preventScroll: true });
@@ -700,15 +839,26 @@
     });
 
     document.querySelector("#restart-button").addEventListener("click", () => {
-      current = 0;
-      score = 0;
       resultView.hidden = true;
       quizView.hidden = false;
-      renderQuestion();
+      startQuiz();
       answersEl.querySelector("button").focus();
     });
 
-    renderQuestion();
+    function startQuiz() {
+      current = 0;
+      score = 0;
+      missedQuestions = [];
+      currentQuestions = shuffleQuestions(currentQuestions);
+      renderQuestion();
+    }
+
+    document.querySelector("#question-total").textContent = String(questions.length);
+    document.querySelector("#result-total").textContent = String(questions.length);
+    document.querySelector("#best-total").textContent = String(questions.length);
+    document.querySelector(".progress-track").setAttribute("aria-valuemax", String(questions.length));
+    bestScoreEl.textContent = String(bestScore);
+    startQuiz();
   </script>
 </body>
 </html>
